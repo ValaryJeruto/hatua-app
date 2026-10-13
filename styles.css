@@ -199,3 +199,11 @@ button:disabled { cursor: not-allowed; }
   .adapted-tag { margin: var(--s1) 0 0; }
   .goal-actions { text-align: center; }
 }
+
+/* ===== stage 6: demo link, offline note, app-wide errors ===== */
+.footer p { margin: 0 0 var(--s1); }
+.demo-link { color: var(--green); }
+.demo-link:disabled { color: var(--muted); text-decoration: none; }
+.offline-note { background: var(--amber-bg); color: var(--amber); border-radius: var(--radius); padding: var(--s2) var(--s3); margin: 0 0 var(--s3); font-size: .88rem; }
+.app-error { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
+.app-error p { margin: 0; padding-top: 6px; }

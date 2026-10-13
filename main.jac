@@ -10,7 +10,8 @@ node Goal {
     has title: str,
         why: str = "",
         minutes_per_day: int = 15,
-        language: str = "en";
+        language: str = "en",
+        is_demo: bool = False;
 }
 
 node Milestone {
@@ -92,6 +93,7 @@ obj ProgressView {
 obj PlanResult {
     has ok: bool,
         error: str = "",
+        offline: bool = False,
         milestones: list[MilestoneView] = [];
 }
 
@@ -263,6 +265,219 @@ def:priv adapt_next_steps(goal: Goal, mood: str, note: str, errors: list[str]) -
     return changed;
 }
 
+# ---- built-in plans (used offline and for the demo; no AI needed) ----
+# Each milestone is [title, step, step, ...].
+
+glob TEMPLATES: dict[str, dict[str, list[list[str]]]] = {
+    "job": {
+        "en": [
+            ["Know what you are aiming for",
+             "Write down 3 job titles you would like to apply for",
+             "Read 3 job adverts and list the skills that keep coming up",
+             "Pick one skill from your list to show off first"],
+            ["Get your CV and profile ready",
+             "Write a short summary of who you are and what you can do",
+             "List your projects, studies and volunteer work on your CV",
+             "Create or update your LinkedIn profile with a clear photo",
+             "Ask a friend or mentor to read your CV and give feedback"],
+            ["Build proof of your skills",
+             "Choose one small project to build or improve",
+             "Spend 15 minutes working on your project",
+             "Share your project online with a short description"],
+            ["Apply and follow up",
+             "Find 2 openings that match your skills",
+             "Write a short, personal message for one application",
+             "Send one application today",
+             "Practise answering 'Tell me about yourself' out loud"]
+        ],
+        "sw": [
+            ["Jua unacholenga",
+             "Andika majina 3 ya kazi ungependa kuomba",
+             "Soma matangazo 3 ya kazi na uorodheshe ujuzi unaojirudia",
+             "Chagua ujuzi mmoja kutoka kwenye orodha yako uanze nao"],
+            ["Andaa CV na wasifu wako",
+             "Andika maelezo mafupi kuhusu wewe na unachoweza kufanya",
+             "Orodhesha miradi, masomo na kazi za kujitolea kwenye CV yako",
+             "Fungua au sasisha wasifu wako wa LinkedIn ukiwa na picha nzuri",
+             "Muombe rafiki au mshauri asome CV yako akupe maoni"],
+            ["Onyesha ujuzi wako",
+             "Chagua mradi mmoja mdogo wa kujenga au kuboresha",
+             "Tumia dakika 15 kufanya kazi kwenye mradi wako",
+             "Shiriki mradi wako mtandaoni pamoja na maelezo mafupi"],
+            ["Omba kazi na ufuatilie",
+             "Tafuta nafasi 2 za kazi zinazolingana na ujuzi wako",
+             "Andika ujumbe mfupi wa kibinafsi kwa ombi moja",
+             "Tuma ombi moja la kazi leo",
+             "Jizoeze kujibu swali 'Niambie kuhusu wewe' kwa sauti"]
+        ]
+    },
+    "money": {
+        "en": [
+            ["See where your money goes",
+             "Write down everything you spend today",
+             "Sort this week's spending into needs and wants",
+             "Pick one 'want' you can cut back on this week"],
+            ["Set a small saving goal",
+             "Choose an amount you can save each week, even a small one",
+             "Write down what you are saving for and why",
+             "Set aside a separate place for your savings"],
+            ["Make saving a habit",
+             "Put your weekly amount aside on the same day each week",
+             "Check your savings total and write it down",
+             "Tell a friend about your goal so they can cheer you on",
+             "Celebrate one week of saving in a free way"]
+        ],
+        "sw": [
+            ["Jua pesa zako zinaenda wapi",
+             "Andika kila kitu unachotumia leo",
+             "Gawa matumizi ya wiki hii kuwa mahitaji na matakwa",
+             "Chagua kitu kimoja usichohitaji sana upunguze wiki hii"],
+            ["Weka lengo dogo la akiba",
+             "Chagua kiasi unachoweza kuweka akiba kila wiki, hata kidogo",
+             "Andika unachowekea akiba na sababu yake",
+             "Tenga mahali maalum pa kuweka akiba yako"],
+            ["Fanya akiba kuwa tabia",
+             "Weka kiasi chako cha wiki kando siku ile ile kila wiki",
+             "Angalia jumla ya akiba yako na uiandike",
+             "Mwambie rafiki kuhusu lengo lako ili akutie moyo",
+             "Sherehekea wiki moja ya kuweka akiba bila kutumia pesa"]
+        ]
+    },
+    "fitness": {
+        "en": [
+            ["Start gently",
+             "Walk for 10 minutes at an easy pace",
+             "Do 5 minutes of gentle stretching",
+             "Choose a regular time of day for your exercise",
+             "If you have a health condition, talk to a health worker before you start"],
+            ["Build the habit",
+             "Walk or jog for 15 minutes",
+             "Write down how you felt after moving today",
+             "Add one minute to your walk or jog",
+             "Invite a friend to exercise with you once this week"],
+            ["Keep going",
+             "Plan your exercise days for next week",
+             "Try a new simple activity, like dancing or skipping",
+             "Look back at your progress and celebrate it"]
+        ],
+        "sw": [
+            ["Anza polepole",
+             "Tembea kwa dakika 10 kwa mwendo wa kawaida",
+             "Fanya mazoezi mepesi ya kunyoosha mwili kwa dakika 5",
+             "Chagua muda maalum wa siku wa kufanya mazoezi",
+             "Kama una tatizo la kiafya, ongea na mhudumu wa afya kabla ya kuanza"],
+            ["Jenga tabia",
+             "Tembea au kimbia polepole kwa dakika 15",
+             "Andika ulivyojisikia baada ya mazoezi ya leo",
+             "Ongeza dakika moja kwenye matembezi au mbio zako",
+             "Mwalike rafiki mfanye mazoezi pamoja mara moja wiki hii"],
+            ["Endelea mbele",
+             "Panga siku zako za mazoezi za wiki ijayo",
+             "Jaribu zoezi jipya rahisi, kama kucheza muziki au kuruka kamba",
+             "Angalia maendeleo yako na ujipongeze"]
+        ]
+    },
+    "skill": {
+        "en": [
+            ["Choose your path",
+             "Write down the skill you want to learn and why",
+             "Find one free course, video series or book for it",
+             "Block 15 minutes in your day for learning"],
+            ["Learn a little every day",
+             "Spend 15 minutes on the first lesson",
+             "Write 3 things you learned today in your own words",
+             "Practise what you learned with a tiny exercise",
+             "Ask one question in an online community or to a friend"],
+            ["Use what you know",
+             "Pick a small project that uses your new skill",
+             "Work on your project for 15 minutes",
+             "Show your project to someone and ask for feedback"]
+        ],
+        "sw": [
+            ["Chagua njia yako",
+             "Andika ujuzi unaotaka kujifunza na sababu yake",
+             "Tafuta kozi moja ya bure, video au kitabu kuhusu ujuzi huo",
+             "Tenga dakika 15 kila siku kwa ajili ya kujifunza"],
+            ["Jifunze kidogo kila siku",
+             "Tumia dakika 15 kwenye somo la kwanza",
+             "Andika mambo 3 uliyojifunza leo kwa maneno yako mwenyewe",
+             "Fanya zoezi dogo ukitumia ulichojifunza",
+             "Uliza swali moja kwenye jumuiya ya mtandaoni au kwa rafiki"],
+            ["Tumia unachojua",
+             "Chagua mradi mdogo unaotumia ujuzi wako mpya",
+             "Fanya kazi kwenye mradi wako kwa dakika 15",
+             "Mwonyeshe mtu mradi wako na umwombe maoni"]
+        ]
+    }
+};
+
+# Word starts that pick a template (English + Kiswahili). Checked in this order.
+glob TEMPLATE_KEYWORDS: list[list[str]] = [
+    ["job", "job", "jobs", "career", "employ", "hire", "hiring", "intern", "interview",
+     "cv", "resume", "freelanc", "kazi", "ajira", "kuajiriwa", "mahojiano"],
+    ["money", "sav", "money", "budget", "debt", "akiba", "pesa", "fedha", "bajeti"],
+    ["fitness", "fit", "exercis", "workout", "gym", "run", "jog", "walk", "5k",
+     "marathon", "stretch", "mazoezi", "kimbia", "kukimbia", "tembea", "kutembea", "mbio"],
+    ["skill", "learn", "study", "skill", "course", "code", "coding", "program", "languag",
+     "practi", "jifunz", "kujifunz", "soma", "kusoma", "ujuzi", "kozi", "lugha"]
+];
+
+# ---- demo goal (seed_demo) ----
+
+glob DEMO_TEXT: dict[str, dict[str, str]] = {
+    "en": {
+        "title": "Get my first online job as a web developer",
+        "why": "I want to earn my own income and build a career in tech.",
+        "note_good": "Wrote down 3 job titles I like",
+        "reply_good": "Lovely work, that's two days in a row! Keep the momentum: read one more job advert tomorrow.",
+        "note_okay": "Busy day, but I read some job adverts",
+        "reply_okay": "An okay day still counts, and you're on a 3-day streak. Tomorrow, just pick one skill to focus on.",
+        "note_hard": "Tired after a long day, felt like giving up",
+        "reply_hard": "Hard days happen, and you still showed up for 4 days in a row. Tomorrow, spend just 10 minutes on your CV summary."
+    },
+    "sw": {
+        "title": "Pata kazi yangu ya kwanza mtandaoni kama msanidi wa tovuti",
+        "why": "Nataka kupata kipato changu na kujenga taaluma katika teknolojia.",
+        "note_good": "Nimeandika majina 3 ya kazi ninazopenda",
+        "reply_good": "Kazi nzuri, siku mbili mfululizo! Endelea hivyo: soma tangazo moja zaidi la kazi kesho.",
+        "note_okay": "Siku ilikuwa na shughuli nyingi, lakini nilisoma matangazo ya kazi",
+        "reply_okay": "Siku ya kawaida bado ina thamani, na uko kwenye mfululizo wa siku 3. Kesho, chagua tu ujuzi mmoja wa kuzingatia.",
+        "note_hard": "Nimechoka baada ya siku ndefu, nilihisi kukata tamaa",
+        "reply_hard": "Siku ngumu hutokea, na bado umejitokeza siku 4 mfululizo. Kesho, tumia dakika 10 tu kwenye maelezo ya CV yako."
+    }
+};
+
+"""Which built-in template fits this text ('' if none). Matches word starts."""
+def:priv match_template(text: str) -> str {
+    words: list[str] = text.lower().replace(",", " ").replace(".", " ").split();
+    for row in TEMPLATE_KEYWORDS {
+        kind = row[0];
+        for kw in row[1:] {
+            for w in words {
+                if w.startswith(kw) { return kind; }
+            }
+        }
+    }
+    return "";
+}
+
+"""A built-in template as MilestonePlans, in 'en' or 'sw'."""
+def:priv template_plan(kind: str, language: str) -> list[MilestonePlan] {
+    by_lang = TEMPLATES.get(kind, TEMPLATES["skill"]);
+    rows: list[list[str]] = by_lang.get(language, by_lang["en"]);
+    return [MilestonePlan(title=row[0], steps=row[1:]) for row in rows];
+}
+
+"""Save milestones and steps under a goal."""
+def:priv save_plan(goal: Goal, plans: list[MilestonePlan]) {
+    for mp in plans {
+        m = goal ++> Milestone(title=mp.title);
+        for text in mp.steps {
+            m ++> Step(text=text);
+        }
+    }
+}
+
 # ---- public endpoints (def:pub = HTTP API) ----
 
 """Create a goal (no AI yet)."""
@@ -298,17 +513,18 @@ def:pub plan_it(goal_id: str) -> PlanResult {
         );
     } except Exception as e {
         print(f"[plan_it] AI call failed: {e}");
+        # Offline fallback: a ready-made plan when the goal matches a template.
+        kind = match_template(goal.title + " " + goal.why);
+        if kind {
+            save_plan(goal, template_plan(kind, goal.language));
+            return PlanResult(ok=True, offline=True, milestones=build_plan(goal));
+        }
         return PlanResult(ok=False, error="plan_failed");
     }
     if len(plans) == 0 {
         return PlanResult(ok=False, error="plan_empty");
     }
-    for mp in plans {
-        m = goal ++> Milestone(title=mp.title);
-        for text in mp.steps {
-            m ++> Step(text=text);
-        }
-    }
+    save_plan(goal, plans);
     return PlanResult(ok=True, milestones=build_plan(goal));
 }
 
@@ -531,6 +747,46 @@ def:pub delete_step(step_id: str) -> bool {
 }
 
 
+"""Create the demo goal (no AI): a full plan, 4 days of ticks and 3 past check-ins.
+Only one demo goal ever exists; calling again returns the existing one's id."""
+def:pub seed_demo(language: str = "en") -> str {
+    for g in [root-->][?:Goal] {
+        if g.is_demo { return jid(g); }
+    }
+    lang = "sw" if language == "sw" else "en";
+    text = DEMO_TEXT[lang];
+    goal = root ++> Goal(
+        title=text["title"], why=text["why"], minutes_per_day=15,
+        language=lang, is_demo=True
+    );
+    save_plan(goal, template_plan("job", lang));
+
+    # Tick the first 4 steps, one per day from 4 days ago to yesterday -> streak 4.
+    today = date.today();
+    days_ago = 4;
+    for m in [goal-->][?:Milestone] {
+        for s in [m-->][?:Step] {
+            if days_ago > 0 {
+                s.done = True;
+                s.done_on = (today - timedelta(days=days_ago)).isoformat();
+                days_ago -= 1;
+            }
+        }
+    }
+
+    # Three past check-ins with short coach replies.
+    for (mood, ago) in [("good", 3), ("okay", 2), ("hard", 1)] {
+        goal ++> CheckIn(
+            mood=mood,
+            note=text["note_" + mood],
+            day=(today - timedelta(days=ago)).isoformat(),
+            coach_reply=text["reply_" + mood]
+        );
+    }
+    return jid(goal);
+}
+
+
 # ================= FRONTEND (runs in the browser) =================
 
 # Every piece of interface text, in English and Kiswahili. Look up with t(key).
@@ -606,7 +862,15 @@ glob T: dict[str, dict[str, str]] = {
         "err_plan_empty": "The AI returned an empty plan. Try rewording your goal.",
         "err_goal_not_found": "Goal not found.",
         "err_coach_offline": "The AI coach is offline right now.",
-        "err_adapt_failed": "Could not make your steps smaller right now."
+        "err_adapt_failed": "Could not make your steps smaller right now.",
+        "err_load_goals": "Could not load your goals. Check that jac run is running, then refresh the page.",
+        "err_open_goal": "Could not open this goal. Please try again.",
+        "err_demo": "Could not load the demo. Please try again.",
+        "err_action": "That didn't work. Check your connection and try again.",
+        "load_demo": "Load demo",
+        "loading_demo": "Loading demo…",
+        "offline_plan": "Offline plan: a ready-made starter plan. You can edit it, or try the AI again later.",
+        "dismiss": "Dismiss"
     },
     "sw": {
         "tagline": "hatua moja baada ya nyingine",
@@ -679,7 +943,15 @@ glob T: dict[str, dict[str, str]] = {
         "err_plan_empty": "AI imerudisha mpango mtupu. Jaribu kuandika lengo lako kwa njia nyingine.",
         "err_goal_not_found": "Lengo halikupatikana.",
         "err_coach_offline": "Kocha wa AI hapatikani kwa sasa.",
-        "err_adapt_failed": "Imeshindwa kurahisisha hatua zako kwa sasa."
+        "err_adapt_failed": "Imeshindwa kurahisisha hatua zako kwa sasa.",
+        "err_load_goals": "Imeshindwa kupakia malengo yako. Hakikisha jac run inaendelea, kisha upakie ukurasa upya.",
+        "err_open_goal": "Imeshindwa kufungua lengo hili. Tafadhali jaribu tena.",
+        "err_demo": "Imeshindwa kupakia mfano. Tafadhali jaribu tena.",
+        "err_action": "Haikufanikiwa. Angalia mtandao wako kisha ujaribu tena.",
+        "load_demo": "Pakia mfano",
+        "loading_demo": "Inapakia mfano…",
+        "offline_plan": "Mpango wa nje ya mtandao: mpango wa kuanzia ulioandaliwa tayari. Unaweza kuubadilisha, au ujaribu AI tena baadaye.",
+        "dismiss": "Funga"
     }
 };
 
@@ -716,7 +988,10 @@ def:pub app -> JsxElement {
         undo_msg: str = "",
         busy: str = "",
         confirm_delete: bool = False,
-        show_goals: bool = False;
+        show_goals: bool = False,
+        app_error: str = "",
+        plan_offline: bool = False,
+        demo_param: bool = False;
 
     # ---- text helpers ----
     def t(key: str) -> str {
@@ -757,7 +1032,17 @@ def:pub app -> JsxElement {
         }
         ui_lang = saved_lang;
         language = saved_lang;
-        goals = await get_goals();
+        try {
+            params: any = new(URLSearchParams, window.location.search);  # jac:ignore[E1053,W1051]
+            demo_param = params.get("demo") == "1";
+        } except Exception {
+            demo_param = False;
+        }
+        try {
+            goals = await get_goals();
+        } except Exception {
+            app_error = "load_goals";
+        }
     }
 
     # Reload everything that changes when a step is ticked, added or deleted.
@@ -785,6 +1070,8 @@ def:pub app -> JsxElement {
 
     def reset_goal_view {
         plan_error = "";
+        plan_offline = False;
+        app_error = "";
         checkin_msg = "";
         coach_reply = "";
         coach_adapted = False;
@@ -797,11 +1084,13 @@ def:pub app -> JsxElement {
     async def run_plan(goal_id: str) {
         planning = True;
         plan_error = "";
+        plan_offline = False;
         tab = "plan";
         try {
             result = await plan_it(goal_id);
             if result.ok {
                 plan = result.milestones;
+                plan_offline = result.offline;
                 await refresh(goal_id);
             } else {
                 plan_error = result.error;
@@ -813,7 +1102,9 @@ def:pub app -> JsxElement {
     }
 
     async def plan_new_goal {
-        if planning or not title.strip() { return; }
+        if planning or busy or not title.strip() { return; }
+        planning = True;
+        app_error = "";
         mins = minutes if minutes > 0 else 15;
         try {
             g = await create_goal(title.strip(), why.strip(), mins, language);
@@ -832,17 +1123,39 @@ def:pub app -> JsxElement {
             why = "";
             await run_plan(jid(g));
         } except Exception {
-            plan_error = "save_goal";
+            planning = False;
+            app_error = "save_goal";
         }
     }
 
     async def open_goal(g: Goal) {
+        if planning { return; }
         selected_goal = jid(g);
         selected_title = g.title;
         reset_goal_view();
         tab = "today";
-        await refresh(jid(g));
-        await load_checkins(jid(g));
+        try {
+            await refresh(jid(g));
+            await load_checkins(jid(g));
+        } except Exception {
+            app_error = "open_goal";
+        }
+    }
+
+    async def load_demo {
+        if busy or planning { return; }
+        busy = "demo";
+        app_error = "";
+        try {
+            demo_id = await seed_demo(ui_lang);
+            goals = await get_goals();
+            for g in goals {
+                if jid(g) == demo_id { await open_goal(g); }
+            }
+        } except Exception {
+            app_error = "demo";
+        }
+        busy = "";
     }
 
     async def add_new_milestone {
@@ -853,7 +1166,7 @@ def:pub app -> JsxElement {
             if m is not None { await refresh(selected_goal); }
             milestone_title = "";
         } except Exception {
-            plan_error = "server";
+            app_error = "action";
         }
         busy = "";
     }
@@ -867,7 +1180,7 @@ def:pub app -> JsxElement {
             if s is not None { await refresh(selected_goal); }
             step_inputs = {**step_inputs, str(milestone_id): ""};
         } except Exception {
-            plan_error = "server";
+            app_error = "action";
         }
         busy = "";
     }
@@ -879,7 +1192,7 @@ def:pub app -> JsxElement {
             updated = await toggle_step(step_id);
             if updated is not None { await refresh(selected_goal); }
         } except Exception {
-            plan_error = "server";
+            app_error = "action";
         }
         busy = "";
     }
@@ -891,7 +1204,7 @@ def:pub app -> JsxElement {
             await delete_step(step_id);
             await refresh(selected_goal);
         } except Exception {
-            plan_error = "server";
+            app_error = "action";
         }
         busy = "";
     }
@@ -910,7 +1223,7 @@ def:pub app -> JsxElement {
             checkins = [];
             reset_goal_view();
         } except Exception {
-            plan_error = "server";
+            app_error = "action";
         }
         busy = "";
     }
@@ -962,6 +1275,7 @@ def:pub app -> JsxElement {
     # ---- Plan tab ----
     plan_view =
         <div>
+            {plan_offline and <p className="offline-note">📴 {t("offline_plan")}</p>}
             {plan_error and
                 <div className="error">
                     <p>{err_text(plan_error)}</p>
@@ -1244,6 +1558,7 @@ def:pub app -> JsxElement {
     }
 
     goals_open = show_goals or not selected_goal;
+    show_demo_link = len(goals) == 0 or demo_param;
 
     return
         <div className="container">
@@ -1273,6 +1588,13 @@ def:pub app -> JsxElement {
             >
                 {t("my_goals")} ({len(goals)}) {"▴" if goals_open else "▾"}
             </button>
+            {app_error and
+                <div className="error app-error" role="alert">
+                    <p>{err_text(app_error)}</p>
+                    <button className="icon-btn" aria-label={t("dismiss")} onClick={lambda { app_error = ""; }}>
+                        ✕
+                    </button>
+                </div>}
             <div className="grid">
                 <section className={"panel side " + ("open" if goals_open else "")}>
                     <h2>{t("new_goal")}</h2>
@@ -1331,6 +1653,12 @@ def:pub app -> JsxElement {
                 </section>
                 {goal_panel}
             </div>
-            <footer className="footer">{t("footer")}</footer>
+            <footer className="footer">
+                <p>{t("footer")}</p>
+                {show_demo_link and
+                    <button className="link-btn demo-link" disabled={busy != "" or planning} onClick={load_demo}>
+                        {t("loading_demo") if busy == "demo" else t("load_demo")}
+                    </button>}
+            </footer>
         </div>;
 }
