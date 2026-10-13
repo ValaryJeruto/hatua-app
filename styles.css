@@ -38,3 +38,58 @@ h3 { font-size: .98rem; margin: 0 0 8px; color: #2e6b34; }
 .error p { margin: 0 0 8px; }
 
 .footer { margin-top: 24px; text-align: center; color: #7a857a; font-size: .85rem; }
+
+/* stage 3: goal header + streak */
+.goal-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.goal-head h2 { margin: 0; }
+.streak { background: #eef1ee; color: #7a857a; border-radius: 999px; padding: 4px 12px; font-size: .85rem; white-space: nowrap; }
+.streak.on { background: #fff3e0; color: #b45309; font-weight: 600; }
+
+/* stage 3: tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid #eef1ee; margin-bottom: 14px; }
+.tab { flex: 1; background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 8px; font-size: .95rem; color: #7a857a; cursor: pointer; }
+.tab:hover { color: #2e6b34; }
+.tab.active { color: #2e6b34; border-bottom-color: #2e6b34; font-weight: 600; }
+
+/* stage 3: today */
+.today-step { display: flex; gap: 14px; align-items: flex-start; padding: 14px; margin-bottom: 10px; border: 1px solid #e2efe3; border-radius: 10px; cursor: pointer; background: #fbfdfb; }
+.today-step:hover { background: #f3f7f3; border-color: #2e6b34; }
+.today-step input { width: 26px; height: 26px; flex-shrink: 0; accent-color: #2e6b34; cursor: pointer; margin: 0; }
+.today-text { display: flex; flex-direction: column; gap: 4px; font-size: 1.02rem; line-height: 1.35; }
+.all-done { font-size: 1.1rem; color: #2e6b34; font-weight: 600; }
+
+/* stage 3: check-in */
+.moods { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.mood { flex: 1; min-width: 90px; background: #fff; border: 1px solid #cfd8cf; border-radius: 8px; padding: 10px 8px; font-size: 1rem; cursor: pointer; }
+.mood:hover { background: #f3f7f3; }
+.mood.active { background: #e2efe3; border-color: #2e6b34; color: #2e6b34; font-weight: 600; }
+.saved { color: #2e6b34; font-weight: 600; margin: 0 0 12px; }
+.checkin { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid #eef1ee; }
+.checkin-day { font-weight: 600; min-width: 92px; }
+.checkin-note { flex-basis: 100%; }
+
+@media (max-width: 760px) {
+  .container { padding: 14px; }
+  .tab { padding: 10px 4px; }
+  .checkin-day { min-width: 0; }
+}
+
+/* stage 4: coach card */
+.coach-card { display: flex; gap: 12px; align-items: flex-start; background: #eef6ee; border: 1px solid #d3e6d4; border-radius: 10px; padding: 12px 14px; margin: 4px 0 14px; }
+.coach-icon { font-size: 1.5rem; line-height: 1; }
+.coach-body { flex: 1; min-width: 0; }
+.coach-body p { margin: 0 0 6px; line-height: 1.45; }
+.coach-body p:last-child { margin-bottom: 0; }
+.coach-adapted { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #c6dcc7; color: #2e6b34; font-weight: 600; font-size: .92rem; }
+.btn-undo { background: #fff; color: #2e6b34; border: 1px solid #2e6b34; border-radius: 6px; padding: 4px 12px; font-size: .85rem; cursor: pointer; }
+.btn-undo:hover { background: #e2efe3; }
+.coach-error { font-style: italic; }
+
+/* stage 4: adapted tag + history replies */
+.adapted-tag { display: inline-block; margin-left: 8px; background: #fff3e0; color: #b45309; border-radius: 999px; padding: 1px 8px; font-size: .75rem; font-weight: 600; }
+.checkin-reply { flex-basis: 100%; line-height: 1.4; }
+
+@media (max-width: 760px) {
+  .coach-card { padding: 10px 12px; }
+  .adapted-tag { margin: 4px 0 0; }
+}

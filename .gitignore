@@ -4,4 +4,7 @@ node_modules/
 .idea/
 
 # local backups
-*_pod_backup.*
+*_backup.*
+
+# secrets
+.env
