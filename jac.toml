@@ -31,5 +31,11 @@ watchdog = ">=3.0.0"
 
 [client]
 
+[client.app_meta_data]
+title = "Hatua · one step at a time"
+description = "Hatua: an AI goal coach that turns big goals into small daily steps."
+theme_color = "#2e6b34"
+icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%B1%3C/text%3E%3C/svg%3E"
+
 [byllm.model]
 default_model = "gemini/gemini-2.5-flash"

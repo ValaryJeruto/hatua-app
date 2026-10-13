@@ -72,6 +72,23 @@ obj CheckInResult {
         error: str = "";
 }
 
+obj MilestoneProgress {
+    has id: str,
+        title: str,
+        done: int,
+        total: int,
+        percent: int;
+}
+
+obj ProgressView {
+    has percent: int,
+        done: int,
+        total: int,
+        streak: int,
+        checkins_this_week: int,
+        milestones: list[MilestoneProgress];
+}
+
 obj PlanResult {
     has ok: bool,
         error: str = "",
@@ -208,7 +225,7 @@ def:priv is_stalled(goal: Goal) -> bool {
 }
 
 """Shrink the next 1-3 unfinished steps with the AI (one call per milestone).
-Returns how many steps changed; failures are added to errors."""
+Returns how many steps changed; failures are added to errors as codes."""
 def:priv adapt_next_steps(goal: Goal, mood: str, note: str, errors: list[str]) -> int {
     left = 3;
     changed = 0;
@@ -228,7 +245,7 @@ def:priv adapt_next_steps(goal: Goal, mood: str, note: str, errors: list[str]) -
             );
         } except Exception as e {
             print(f"[add_checkin] adapt_steps failed: {e}");
-            errors.append("Could not make your steps smaller right now.");
+            errors.append("adapt_failed");
             break;
         }
         if len(new_texts) != len(batch) {
@@ -268,7 +285,7 @@ def:pub plan_it(goal_id: str) -> PlanResult {
     load_env();
     goal = find_goal(goal_id);
     if goal is None {
-        return PlanResult(ok=False, error="Goal not found.");
+        return PlanResult(ok=False, error="goal_not_found");
     }
     # Already planned? Just return the saved plan (no duplicate milestones).
     if len([goal-->][?:Milestone]) > 0 {
@@ -281,15 +298,10 @@ def:pub plan_it(goal_id: str) -> PlanResult {
         );
     } except Exception as e {
         print(f"[plan_it] AI call failed: {e}");
-        return PlanResult(
-            ok=False,
-            error="The AI coach could not make a plan right now. Check your internet connection and GEMINI_API_KEY, then try again."
-        );
+        return PlanResult(ok=False, error="plan_failed");
     }
     if len(plans) == 0 {
-        return PlanResult(
-            ok=False, error="The AI returned an empty plan. Try rewording your goal."
-        );
+        return PlanResult(ok=False, error="plan_empty");
     }
     for mp in plans {
         m = goal ++> Milestone(title=mp.title);
@@ -402,7 +414,7 @@ def:pub add_checkin(goal_id: str, mood: str, note: str = "") -> CheckInResult | 
         ).strip();
     } except Exception as e {
         print(f"[add_checkin] coach_message failed: {e}");
-        errors.append("The AI coach is offline right now.");
+        errors.append("coach_offline");
     }
     if not reply { reply = fallback_reply(goal.language); }
     c.coach_reply = reply;
@@ -452,11 +464,232 @@ def:pub get_checkins(goal_id: str) -> list[CheckInView] {
     return [checkin_view(by_day[d]) for d in days];
 }
 
+"""Overall and per-milestone progress, streak and check-ins in the last 7 days."""
+def:pub get_progress(goal_id: str) -> ProgressView {
+    empty = ProgressView(
+        percent=0, done=0, total=0, streak=0, checkins_this_week=0, milestones=[]
+    );
+    goal = find_goal(goal_id);
+    if goal is None { return empty; }
+    rows: list[MilestoneProgress] = [];
+    done = 0;
+    total = 0;
+    for m in [goal-->][?:Milestone] {
+        steps = [m-->][?:Step];
+        m_done = len([s for s in steps if s.done]);
+        rows.append(
+            MilestoneProgress(
+                id=jid(m),
+                title=m.title,
+                done=m_done,
+                total=len(steps),
+                percent=round(m_done * 100 / len(steps)) if len(steps) > 0 else 0
+            )
+        );
+        done += m_done;
+        total += len(steps);
+    }
+    week_start = (date.today() - timedelta(days=6)).isoformat();
+    week = len([c for c in [goal-->][?:CheckIn] if c.day >= week_start]);
+    return ProgressView(
+        percent=round(done * 100 / total) if total > 0 else 0,
+        done=done,
+        total=total,
+        streak=get_streak(goal_id),
+        checkins_this_week=week,
+        milestones=rows
+    );
+}
+
+"""Delete a goal with all its milestones, steps and check-ins. Returns nodes removed."""
+def:pub delete_goal(goal_id: str) -> int {
+    goal = find_goal(goal_id);
+    if goal is None { return 0; }
+    removed = 0;
+    for m in [goal-->][?:Milestone] {
+        for s in [m-->][?:Step] {
+            del s;
+            removed += 1;
+        }
+        del m;
+        removed += 1;
+    }
+    for c in [goal-->][?:CheckIn] {
+        del c;
+        removed += 1;
+    }
+    del goal;
+    return removed + 1;
+}
+
+"""Delete a single step."""
+def:pub delete_step(step_id: str) -> bool {
+    s = find_step(step_id);
+    if s is None { return False; }
+    del s;
+    return True;
+}
+
 
 # ================= FRONTEND (runs in the browser) =================
 
+# Every piece of interface text, in English and Kiswahili. Look up with t(key).
+glob T: dict[str, dict[str, str]] = {
+    "en": {
+        "tagline": "one step at a time",
+        "ui_language": "Interface language",
+        "new_goal": "New goal",
+        "ph_title": "Big goal, e.g. Run a 5K by December",
+        "ph_why": "Why does it matter to you?",
+        "min_day": "min / day",
+        "goal_language": "Plan language",
+        "lang_en": "English",
+        "lang_sw": "Kiswahili",
+        "plan_it": "Plan it",
+        "planning": "Planning…",
+        "my_goals": "My goals",
+        "no_goals": "No goals yet. Write your first big goal above 🌱",
+        "goal_meta": "{m} min/day",
+        "pick_goal": "Create a goal and press Plan it, or pick one from My goals.",
+        "planning_msg": "Hatua is breaking \"{title}\" into small steps…",
+        "streak_n": "🔥 {n}-day streak",
+        "streak_0": "Start your streak today",
+        "tab_today": "Today",
+        "tab_plan": "Plan",
+        "tab_checkin": "Check-in",
+        "tab_progress": "Progress",
+        "next_steps": "Your next small steps:",
+        "adapted_tag": "Adapted for today",
+        "original": "Original: ",
+        "all_done": "All steps done — amazing!",
+        "no_steps": "No steps yet. Open the Plan tab to plan this goal.",
+        "go_plan": "Go to Plan",
+        "try_again": "Try again",
+        "no_milestones": "No milestones yet. Let Hatua plan it, or add your own below.",
+        "plan_ai": "Plan it with AI",
+        "ph_step": "Add a step",
+        "ph_milestone": "Add your own milestone",
+        "add": "Add",
+        "adding": "…",
+        "delete_step": "Delete step",
+        "how_today": "How did today go?",
+        "mood_good": "😀 Good",
+        "mood_okay": "😐 Okay",
+        "mood_hard": "😞 Hard",
+        "ph_note": "One line about your day (optional)",
+        "save": "Save",
+        "saving": "Saving…",
+        "thinking": "Thinking…",
+        "adapted_msg": "I made your next steps smaller for today 💛",
+        "undo": "Undo",
+        "undoing": "Undoing…",
+        "restored": "Restored {n} step(s) to the original plan.",
+        "nothing_restore": "Nothing to restore.",
+        "last7": "Last 7 check-ins",
+        "no_checkins": "No check-ins yet. How are you feeling today?",
+        "today": "Today",
+        "overall": "of all steps done",
+        "steps_of": "{d} of {t} steps",
+        "streak_label": "Day streak",
+        "week_checkins": "Check-ins this week",
+        "no_progress": "No steps yet. Plan your goal to see your progress here.",
+        "delete_goal": "Delete goal",
+        "confirm_delete": "Delete \"{title}\" with all its steps and check-ins? This can't be undone.",
+        "yes_delete": "Yes, delete",
+        "deleting": "Deleting…",
+        "cancel": "Cancel",
+        "footer": "Need support? Call Kenya Red Cross on 1199.",
+        "err_server": "Could not reach the server. Is jac run still running?",
+        "err_save_goal": "Could not save the goal. Please try again.",
+        "err_save": "Could not save. Please try again.",
+        "err_plan_failed": "The AI coach could not make a plan right now. Check your internet connection and GEMINI_API_KEY, then try again.",
+        "err_plan_empty": "The AI returned an empty plan. Try rewording your goal.",
+        "err_goal_not_found": "Goal not found.",
+        "err_coach_offline": "The AI coach is offline right now.",
+        "err_adapt_failed": "Could not make your steps smaller right now."
+    },
+    "sw": {
+        "tagline": "hatua moja baada ya nyingine",
+        "ui_language": "Lugha ya programu",
+        "new_goal": "Lengo jipya",
+        "ph_title": "Lengo kubwa, mf. Kukimbia km 5 kufikia Desemba",
+        "ph_why": "Kwa nini lengo hili ni muhimu kwako?",
+        "min_day": "dak / siku",
+        "goal_language": "Lugha ya mpango",
+        "lang_en": "Kiingereza",
+        "lang_sw": "Kiswahili",
+        "plan_it": "Panga",
+        "planning": "Inapanga…",
+        "my_goals": "Malengo yangu",
+        "no_goals": "Bado huna lengo. Andika lengo lako la kwanza hapo juu 🌱",
+        "goal_meta": "dak {m}/siku",
+        "pick_goal": "Andika lengo kisha bonyeza Panga, au chagua moja kwenye Malengo yangu.",
+        "planning_msg": "Hatua inagawa \"{title}\" katika hatua ndogo…",
+        "streak_n": "🔥 Siku {n} mfululizo",
+        "streak_0": "Anza mfululizo wako leo",
+        "tab_today": "Leo",
+        "tab_plan": "Mpango",
+        "tab_checkin": "Ripoti",
+        "tab_progress": "Maendeleo",
+        "next_steps": "Hatua zako ndogo zinazofuata:",
+        "adapted_tag": "Imerahisishwa kwa leo",
+        "original": "Awali: ",
+        "all_done": "Hatua zote zimekamilika — hongera sana!",
+        "no_steps": "Bado hakuna hatua. Fungua Mpango ili kupanga lengo hili.",
+        "go_plan": "Nenda kwenye Mpango",
+        "try_again": "Jaribu tena",
+        "no_milestones": "Bado hakuna hatua kuu. Acha Hatua ipange, au ongeza zako hapa chini.",
+        "plan_ai": "Panga kwa AI",
+        "ph_step": "Ongeza hatua",
+        "ph_milestone": "Ongeza hatua kuu yako mwenyewe",
+        "add": "Ongeza",
+        "adding": "…",
+        "delete_step": "Futa hatua",
+        "how_today": "Leo imekuwaje?",
+        "mood_good": "😀 Vizuri",
+        "mood_okay": "😐 Kawaida",
+        "mood_hard": "😞 Ngumu",
+        "ph_note": "Sentensi moja kuhusu siku yako (si lazima)",
+        "save": "Hifadhi",
+        "saving": "Inahifadhi…",
+        "thinking": "Inafikiri…",
+        "adapted_msg": "Nimezifanya hatua zako zinazofuata kuwa ndogo kwa leo 💛",
+        "undo": "Tendua",
+        "undoing": "Inatendua…",
+        "restored": "Hatua {n} zimerudishwa kama zilivyokuwa.",
+        "nothing_restore": "Hakuna cha kurudisha.",
+        "last7": "Ripoti 7 za mwisho",
+        "no_checkins": "Bado hakuna ripoti. Unajisikiaje leo?",
+        "today": "Leo",
+        "overall": "ya hatua zote imekamilika",
+        "steps_of": "Hatua {d} kati ya {t}",
+        "streak_label": "Siku mfululizo",
+        "week_checkins": "Ripoti wiki hii",
+        "no_progress": "Bado hakuna hatua. Panga lengo lako uone maendeleo yako hapa.",
+        "delete_goal": "Futa lengo",
+        "confirm_delete": "Ufute \"{title}\" pamoja na hatua na ripoti zake zote? Huwezi kurudisha.",
+        "yes_delete": "Ndiyo, futa",
+        "deleting": "Inafuta…",
+        "cancel": "Ghairi",
+        "footer": "Unahitaji msaada? Piga simu Kenya Red Cross kupitia 1199.",
+        "err_server": "Imeshindwa kufikia seva. Je, jac run bado inaendelea?",
+        "err_save_goal": "Imeshindwa kuhifadhi lengo. Tafadhali jaribu tena.",
+        "err_save": "Imeshindwa kuhifadhi. Tafadhali jaribu tena.",
+        "err_plan_failed": "Kocha wa AI hakuweza kutengeneza mpango sasa hivi. Angalia mtandao wako na GEMINI_API_KEY, kisha ujaribu tena.",
+        "err_plan_empty": "AI imerudisha mpango mtupu. Jaribu kuandika lengo lako kwa njia nyingine.",
+        "err_goal_not_found": "Lengo halikupatikana.",
+        "err_coach_offline": "Kocha wa AI hapatikani kwa sasa.",
+        "err_adapt_failed": "Imeshindwa kurahisisha hatua zako kwa sasa."
+    }
+};
+
+glob PAGE_TITLE: str = "Hatua · one step at a time";
+glob FAVICON: str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%B1%3C/text%3E%3C/svg%3E";
+glob LANG_KEY: str = "hatua_lang";
+
 def:pub app -> JsxElement {
-    has goals: list[Goal] = [],
+    has ui_lang: str = "en",
+        goals: list[Goal] = [],
         plan: list[MilestoneView] = [],
         title: str = "",
         why: str = "",
@@ -471,6 +704,7 @@ def:pub app -> JsxElement {
         tab: str = "today",
         today: list[TodayStep] = [],
         streak: int = 0,
+        progress: ProgressView | None = None,
         checkins: list[CheckInView] = [],
         mood: str = "",
         note: str = "",
@@ -478,18 +712,60 @@ def:pub app -> JsxElement {
         checkin_msg: str = "",
         coach_reply: str = "",
         coach_adapted: bool = False,
-        coach_error: str = "",
-        undo_msg: str = "";
+        coach_errors: list[str] = [],
+        undo_msg: str = "",
+        busy: str = "",
+        confirm_delete: bool = False,
+        show_goals: bool = False;
+
+    # ---- text helpers ----
+    def t(key: str) -> str {
+        words = T.get(ui_lang, T["en"]);
+        return words.get(key, T["en"].get(key, key));
+    }
+
+    # Server sends short error codes; show them in the interface language.
+    def err_text(code: str) -> str {
+        return t("err_" + code) if ("err_" + code) in T["en"] else code;
+    }
+
+    def set_ui_lang(lang: str) {
+        ui_lang = lang;
+        language = lang;
+        try {
+            localStorage.setItem(LANG_KEY, lang);
+        } except Exception {
+            console.warn("[hatua] could not save language");
+        }
+    }
 
     async can with entry {
+        document.title = PAGE_TITLE;
+        link: any = document.querySelector("link[rel='icon']");
+        if not link {
+            link = document.createElement("link");
+            link.rel = "icon";
+            head: any = document.head;
+            head.appendChild(link);
+        }
+        link.href = FAVICON;
+        saved_lang = "en";
+        try {
+            if localStorage.getItem(LANG_KEY) == "sw" { saved_lang = "sw"; }
+        } except Exception {
+            console.warn("[hatua] could not read language");
+        }
+        ui_lang = saved_lang;
+        language = saved_lang;
         goals = await get_goals();
     }
 
-    # Reload everything that changes when a step is ticked.
+    # Reload everything that changes when a step is ticked, added or deleted.
     async def refresh(goal_id: str) {
         plan = await get_plan(goal_id);
         today = await get_today(goal_id);
         streak = await get_streak(goal_id);
+        progress = await get_progress(goal_id);
     }
 
     async def load_checkins(goal_id: str) {
@@ -507,6 +783,17 @@ def:pub app -> JsxElement {
         note = today_note;
     }
 
+    def reset_goal_view {
+        plan_error = "";
+        checkin_msg = "";
+        coach_reply = "";
+        coach_adapted = False;
+        coach_errors = [];
+        undo_msg = "";
+        confirm_delete = False;
+        show_goals = False;
+    }
+
     async def run_plan(goal_id: str) {
         planning = True;
         plan_error = "";
@@ -515,13 +802,12 @@ def:pub app -> JsxElement {
             result = await plan_it(goal_id);
             if result.ok {
                 plan = result.milestones;
-                today = await get_today(goal_id);
-                streak = await get_streak(goal_id);
+                await refresh(goal_id);
             } else {
                 plan_error = result.error;
             }
-        } except Exception as e {
-            plan_error = "Could not reach the server. Is jac run still running?";
+        } except Exception {
+            plan_error = "server";
         }
         planning = False;
     }
@@ -534,59 +820,99 @@ def:pub app -> JsxElement {
             goals = goals + [g];
             selected_goal = jid(g);
             selected_title = g.title;
+            reset_goal_view();
             plan = [];
             today = [];
             streak = 0;
+            progress = None;
             checkins = [];
             mood = "";
             note = "";
-            checkin_msg = "";
-            coach_reply = "";
-            coach_adapted = False;
-            coach_error = "";
-            undo_msg = "";
             title = "";
             why = "";
             await run_plan(jid(g));
-        } except Exception as e {
-            plan_error = "Could not save the goal. Is jac run still running?";
+        } except Exception {
+            plan_error = "save_goal";
         }
     }
 
     async def open_goal(g: Goal) {
         selected_goal = jid(g);
         selected_title = g.title;
-        plan_error = "";
-        checkin_msg = "";
-        coach_reply = "";
-        coach_adapted = False;
-        coach_error = "";
-        undo_msg = "";
+        reset_goal_view();
         tab = "today";
         await refresh(jid(g));
         await load_checkins(jid(g));
     }
 
     async def add_new_milestone {
-        if milestone_title.strip() and selected_goal {
+        if busy or not milestone_title.strip() or not selected_goal { return; }
+        busy = "milestone";
+        try {
             m = await add_milestone(selected_goal, milestone_title.strip());
             if m is not None { await refresh(selected_goal); }
             milestone_title = "";
+        } except Exception {
+            plan_error = "server";
         }
+        busy = "";
     }
 
     async def add_new_step(milestone_id: str) {
         text = step_inputs.get(milestone_id, "").strip();
-        if text {
+        if busy or not text { return; }
+        busy = "step:" + milestone_id;
+        try {
             s = await add_step(milestone_id, text);
             if s is not None { await refresh(selected_goal); }
             step_inputs = {**step_inputs, str(milestone_id): ""};
+        } except Exception {
+            plan_error = "server";
         }
+        busy = "";
     }
 
     async def tick(step_id: str) {
-        updated = await toggle_step(step_id);
-        if updated is not None { await refresh(selected_goal); }
+        if busy { return; }
+        busy = "tick:" + step_id;
+        try {
+            updated = await toggle_step(step_id);
+            if updated is not None { await refresh(selected_goal); }
+        } except Exception {
+            plan_error = "server";
+        }
+        busy = "";
+    }
+
+    async def remove_step(step_id: str) {
+        if busy { return; }
+        busy = "del:" + step_id;
+        try {
+            await delete_step(step_id);
+            await refresh(selected_goal);
+        } except Exception {
+            plan_error = "server";
+        }
+        busy = "";
+    }
+
+    async def remove_goal {
+        if busy or not selected_goal { return; }
+        busy = "goal";
+        try {
+            await delete_goal(selected_goal);
+            goals = [g for g in goals if jid(g) != selected_goal];
+            selected_goal = "";
+            selected_title = "";
+            plan = [];
+            today = [];
+            progress = None;
+            checkins = [];
+            reset_goal_view();
+        } except Exception {
+            plan_error = "server";
+        }
+        busy = "";
     }
 
     async def save_checkin {
@@ -595,74 +921,85 @@ def:pub app -> JsxElement {
         checkin_msg = "";
         coach_reply = "";
         coach_adapted = False;
-        coach_error = "";
+        coach_errors = [];
         undo_msg = "";
         try {
             result = await add_checkin(selected_goal, mood, note.strip());
             if result is not None {
                 coach_reply = result.coach_reply;
                 coach_adapted = result.adapted;
-                coach_error = result.error;
+                coach_errors = [c for c in result.error.split(" ") if c];
                 await load_checkins(selected_goal);
-                if result.adapted { await refresh(selected_goal); }
+                await refresh(selected_goal);
             } else {
-                checkin_msg = "Could not save. Please try again.";
+                checkin_msg = "save";
             }
-        } except Exception as e {
-            checkin_msg = "Could not reach the server. Is jac run still running?";
+        } except Exception {
+            checkin_msg = "server";
         }
         saving = False;
     }
 
     async def undo_adapt {
-        if not selected_goal { return; }
+        if busy or not selected_goal { return; }
+        busy = "undo";
         try {
             restored = await restore_steps(selected_goal);
             await refresh(selected_goal);
             coach_adapted = False;
             undo_msg = (
-                f"Restored {restored} step(s) to the original plan."
-                if restored > 0 else "Nothing to restore."
+                t("restored").replace("{n}", str(restored))
+                if restored > 0 else t("nothing_restore")
             );
-        } except Exception as e {
-            undo_msg = "Could not reach the server. Is jac run still running?";
+        } except Exception {
+            undo_msg = t("err_server");
         }
+        busy = "";
     }
 
-    mood_labels: dict[str, str] = {
-        "good": "😀 Good", "okay": "😐 Okay", "hard": "😞 Hard"
-    };
     total_steps = sum([len(m.steps) for m in plan]);
 
-    # ---- Plan tab (unchanged Stage 2 view) ----
+    # ---- Plan tab ----
     plan_view =
         <div>
             {plan_error and
                 <div className="error">
-                    <p>{plan_error}</p>
+                    <p>{err_text(plan_error)}</p>
                     <button className="btn small" onClick={lambda { run_plan(selected_goal); }}>
-                        Try again
+                        {t("try_again")}
                     </button>
                 </div>}
             {(len(plan) == 0 and not plan_error) and
-                <div className="hint">
-                    <p className="muted">No milestones yet.</p>
+                <div className="empty-state">
+                    <p>{t("no_milestones")}</p>
                     <button className="btn" onClick={lambda { run_plan(selected_goal); }}>
-                        Plan it with AI
+                        {t("plan_ai")}
                     </button>
                 </div>}
             {[
                 <div key={m.id} className="milestone">
                     <h3>{m.title}</h3>
                     {[
-                        <label key={s.id} className={"step " + ("done" if s.done else "")}>
-                            <input
-                                type="checkbox"
-                                checked={s.done}
-                                onChange={lambda (e: ChangeEvent) { tick(s.id); }}
-                            />
-                            <span>{s.text}</span>
-                        </label> for s in m.steps
+                        <div key={s.id} className={"step " + ("done" if s.done else "")}>
+                            <label className="step-main">
+                                <input
+                                    type="checkbox"
+                                    checked={s.done}
+                                    disabled={busy != ""}
+                                    onChange={lambda { tick(s.id); }}
+                                />
+                                <span>{s.text}</span>
+                            </label>
+                            <button
+                                className="icon-btn"
+                                title={t("delete_step")}
+                                aria-label={t("delete_step")}
+                                disabled={busy != ""}
+                                onClick={lambda { remove_step(s.id); }}
+                            >
+                                {"…" if busy == "del:" + s.id else "✕"}
+                            </button>
+                        </div> for s in m.steps
                     ]}
                     <div className="row">
                         <input
@@ -671,10 +1008,14 @@ def:pub app -> JsxElement {
                             onChange={lambda (e: ChangeEvent) {
                                 step_inputs = {**step_inputs, str(m.id): e.target.value};
                             }}
-                            placeholder="Add a step"
+                            placeholder={t("ph_step")}
                         />
-                        <button className="btn small" onClick={lambda { add_new_step(m.id); }}>
-                            Add
+                        <button
+                            className="btn small"
+                            disabled={busy != "" or not step_inputs.get(m.id, "").strip()}
+                            onClick={lambda { add_new_step(m.id); }}
+                        >
+                            {t("adding") if busy == "step:" + m.id else t("add")}
                         </button>
                     </div>
                 </div> for m in plan
@@ -684,9 +1025,15 @@ def:pub app -> JsxElement {
                     className="input"
                     value={milestone_title}
                     onChange={lambda (e: ChangeEvent) { milestone_title = e.target.value; }}
-                    placeholder="Add your own milestone"
+                    placeholder={t("ph_milestone")}
                 />
-                <button className="btn" onClick={add_new_milestone}>Add</button>
+                <button
+                    className="btn"
+                    disabled={busy != "" or not milestone_title.strip()}
+                    onClick={add_new_milestone}
+                >
+                    {t("adding") if busy == "milestone" else t("add")}
+                </button>
             </div>
         </div>;
 
@@ -694,41 +1041,45 @@ def:pub app -> JsxElement {
     if len(today) > 0 {
         today_view =
             <div>
-                <p className="muted">Your next small steps:</p>
+                <p className="muted">{t("next_steps")}</p>
                 {[
-                    <label key={t.id} className="today-step">
+                    <label
+                        key={ts.id}
+                        className={"today-step " + ("busy" if busy == "tick:" + ts.id else "")}
+                    >
                         <input
                             type="checkbox"
-                            checked={t.done}
-                            onChange={lambda (e: ChangeEvent) { tick(t.id); }}
+                            checked={ts.done}
+                            disabled={busy != ""}
+                            onChange={lambda { tick(ts.id); }}
                         />
                         <span className="today-text">
-                            {t.text}
+                            {ts.text}
                             <small className="muted">
-                                {t.milestone_title}
-                                {t.original_text and
-                                    <span className="adapted-tag" title={"Original: " + t.original_text}>
-                                        Adapted for today
+                                {ts.milestone_title}
+                                {ts.original_text and
+                                    <span className="adapted-tag" title={t("original") + ts.original_text}>
+                                        {t("adapted_tag")}
                                     </span>}
                             </small>
                         </span>
-                    </label> for t in today
+                    </label> for ts in today
                 ]}
             </div>;
     } elif total_steps > 0 {
-        today_view = <div className="hint all-done">All steps done — amazing!</div>;
+        today_view = <div className="empty-state all-done">{t("all_done")}</div>;
     } else {
         today_view =
-            <div className="hint">
-                <p className="muted">No steps yet. Open the Plan tab to plan this goal.</p>
-                <button className="btn" onClick={lambda { tab = "plan"; }}>Go to Plan</button>
+            <div className="empty-state">
+                <p>{t("no_steps")}</p>
+                <button className="btn" onClick={lambda { tab = "plan"; }}>{t("go_plan")}</button>
             </div>;
     }
 
     # ---- Check-in tab ----
     checkin_view =
         <div>
-            <p className="muted">How did today go?</p>
+            <p className="muted">{t("how_today")}</p>
             <div className="moods">
                 {[
                     <button
@@ -736,7 +1087,7 @@ def:pub app -> JsxElement {
                         className={"mood " + ("active" if mood == k else "")}
                         onClick={lambda { mood = k; checkin_msg = ""; }}
                     >
-                        {mood_labels[k]}
+                        {t("mood_" + k)}
                     </button> for k in ["good", "okay", "hard"]
                 ]}
             </div>
@@ -746,145 +1097,240 @@ def:pub app -> JsxElement {
                     value={note}
                     maxLength={200}
                     onChange={lambda (e: ChangeEvent) { note = e.target.value; checkin_msg = ""; }}
-                    placeholder="One line about your day (optional)"
+                    placeholder={t("ph_note")}
                 />
                 <button className="btn" disabled={not mood or saving} onClick={save_checkin}>
-                    {"Saving…" if saving else "Save"}
+                    {t("saving") if saving else t("save")}
                 </button>
             </div>
-            {checkin_msg and <p className="error">{checkin_msg}</p>}
+            {checkin_msg and <p className="error">{err_text(checkin_msg)}</p>}
             {(saving or coach_reply) and
                 <div className="coach-card">
                     <span className="coach-icon">🌱</span>
                     <div className="coach-body">
-                        {saving and <p className="muted">Thinking…</p>}
+                        {saving and <p className="muted">{t("thinking")}</p>}
                         {(not saving and coach_reply) and <p>{coach_reply}</p>}
                         {(not saving and coach_adapted) and
                             <div className="coach-adapted">
-                                <span>I made your next steps smaller for today 💛</span>
-                                <button className="btn-undo" onClick={undo_adapt}>Undo</button>
+                                <span>{t("adapted_msg")}</span>
+                                <button className="btn-undo" disabled={busy != ""} onClick={undo_adapt}>
+                                    {t("undoing") if busy == "undo" else t("undo")}
+                                </button>
                             </div>}
                         {undo_msg and <p className="muted">{undo_msg}</p>}
-                        {coach_error and <p className="muted coach-error">{coach_error}</p>}
+                        {[
+                            <p key={code} className="muted coach-error">{err_text(code)}</p>
+                            for code in coach_errors
+                        ]}
                     </div>
                 </div>}
-            <h3>Last 7 check-ins</h3>
-            {len(checkins) == 0 and <p className="muted">No check-ins yet.</p>}
+            <h3>{t("last7")}</h3>
+            {len(checkins) == 0 and <p className="empty-state small">{t("no_checkins")}</p>}
             {[
                 <div key={c.id} className="checkin">
-                    <span className="checkin-day">{"Today" if c.is_today else c.day}</span>
-                    <span>{mood_labels.get(c.mood, c.mood)}</span>
+                    <span className="checkin-day">{t("today") if c.is_today else c.day}</span>
+                    <span>{t("mood_" + c.mood)}</span>
                     {c.note and <span className="muted checkin-note">{c.note}</span>}
                     {c.coach_reply and <span className="muted checkin-reply">🌱 {c.coach_reply}</span>}
                 </div> for c in checkins
             ]}
         </div>;
 
+    # ---- Progress tab ----
+    if progress is None or progress.total == 0 {
+        progress_view = <div className="empty-state"><p>{t("no_progress")}</p></div>;
+    } else {
+        progress_view =
+            <div>
+                <div className="progress-hero">
+                    <span className="progress-big">{progress.percent}%</span>
+                    <span className="muted">{t("overall")}</span>
+                    <div className="bar big">
+                        <div className="bar-fill" style={{"width": f"{progress.percent}%"}}></div>
+                    </div>
+                </div>
+                <div className="stats">
+                    <div className="stat">
+                        <span className="stat-num">{progress.streak}</span>
+                        <span className="muted">{t("streak_label")}</span>
+                    </div>
+                    <div className="stat">
+                        <span className="stat-num">{progress.checkins_this_week}</span>
+                        <span className="muted">{t("week_checkins")}</span>
+                    </div>
+                </div>
+                {[
+                    <div key={mp.id} className="milestone-progress">
+                        <div className="mp-head">
+                            <span className="mp-title">{mp.title}</span>
+                            <span className="muted nowrap">
+                                {t("steps_of").replace("{d}", str(mp.done)).replace("{t}", str(mp.total))}
+                            </span>
+                        </div>
+                        <div className="bar">
+                            <div
+                                className="bar-fill"
+                                style={{"width": f"{mp.percent}%"}}
+                            ></div>
+                        </div>
+                    </div> for mp in progress.milestones
+                ]}
+            </div>;
+    }
+
     # ---- Right panel: the selected goal ----
     if not selected_goal {
-        plan_panel =
+        goal_panel =
             <section className="panel empty">
-                Create a goal and press Plan it, or pick a goal on the left.
+                <span className="empty-icon">👣</span>
+                <p>{t("pick_goal")}</p>
             </section>;
     } elif planning {
-        plan_panel =
+        goal_panel =
             <section className="panel empty">
                 <div className="spinner"></div>
-                <p>Hatua is breaking "{selected_title}" into small steps…</p>
+                <p>{t("planning_msg").replace("{title}", selected_title)}</p>
             </section>;
     } else {
         if tab == "plan" {
             tab_body = plan_view;
         } elif tab == "checkin" {
             tab_body = checkin_view;
+        } elif tab == "progress" {
+            tab_body = progress_view;
         } else {
             tab_body = today_view;
         }
-        plan_panel =
+        goal_panel =
             <section className="panel">
                 <div className="goal-head">
                     <h2>{selected_title}</h2>
                     <span className={"streak " + ("on" if streak > 0 else "")}>
-                        {f"🔥 {streak}-day streak" if streak > 0 else "Start your streak today"}
+                        {t("streak_n").replace("{n}", str(streak)) if streak > 0 else t("streak_0")}
                     </span>
                 </div>
-                <div className="tabs">
-                    <button
-                        className={"tab " + ("active" if tab == "today" else "")}
-                        onClick={lambda { tab = "today"; }}
-                    >Today</button>
-                    <button
-                        className={"tab " + ("active" if tab == "plan" else "")}
-                        onClick={lambda { tab = "plan"; }}
-                    >Plan</button>
-                    <button
-                        className={"tab " + ("active" if tab == "checkin" else "")}
-                        onClick={lambda { tab = "checkin"; checkin_msg = ""; }}
-                    >Check-in</button>
+                {confirm_delete and
+                    <div className="confirm">
+                        <p>{t("confirm_delete").replace("{title}", selected_title)}</p>
+                        <div className="row">
+                            <button className="btn danger" disabled={busy != ""} onClick={remove_goal}>
+                                {t("deleting") if busy == "goal" else t("yes_delete")}
+                            </button>
+                            <button className="btn ghost" onClick={lambda { confirm_delete = False; }}>
+                                {t("cancel")}
+                            </button>
+                        </div>
+                    </div>}
+                <div className="tabs" role="tablist">
+                    {[
+                        <button
+                            key={k}
+                            role="tab"
+                            className={"tab " + ("active" if tab == k else "")}
+                            onClick={lambda { tab = k; checkin_msg = ""; }}
+                        >
+                            {t("tab_" + k)}
+                        </button> for k in ["today", "plan", "checkin", "progress"]
+                    ]}
                 </div>
                 {tab_body}
+                {not confirm_delete and
+                    <div className="goal-actions">
+                        <button className="link-btn danger-text" onClick={lambda { confirm_delete = True; }}>
+                            {t("delete_goal")}
+                        </button>
+                    </div>}
             </section>;
     }
 
+    goals_open = show_goals or not selected_goal;
+
     return
         <div className="container">
-            <h1>Hatua <span className="muted">· one step at a time</span></h1>
+            <header className="header">
+                <h1 className="brand">
+                    <span className="logo" aria-hidden="true">🌱</span>
+                    Hatua
+                    <span className="tagline">· {t("tagline")}</span>
+                </h1>
+                <div className="lang-switch" role="group" aria-label={t("ui_language")}>
+                    {[
+                        <button
+                            key={code}
+                            className={"lang-btn " + ("active" if ui_lang == code else "")}
+                            aria-pressed={ui_lang == code}
+                            onClick={lambda { set_ui_lang(code); }}
+                        >
+                            {"EN" if code == "en" else "SW"}
+                        </button> for code in ["en", "sw"]
+                    ]}
+                </div>
+            </header>
+            <button
+                className="goals-toggle"
+                aria-expanded={goals_open}
+                onClick={lambda { show_goals = not show_goals; }}
+            >
+                {t("my_goals")} ({len(goals)}) {"▴" if goals_open else "▾"}
+            </button>
             <div className="grid">
-                <section className="panel">
-                    <h2>New goal</h2>
+                <section className={"panel side " + ("open" if goals_open else "")}>
+                    <h2>{t("new_goal")}</h2>
                     <input
                         className="input"
                         value={title}
                         onChange={lambda (e: ChangeEvent) { title = e.target.value; }}
-                        placeholder="Big goal, e.g. Run a 5K by December"
+                        placeholder={t("ph_title")}
                     />
                     <input
                         className="input"
                         value={why}
                         onChange={lambda (e: ChangeEvent) { why = e.target.value; }}
-                        placeholder="Why does it matter to you?"
+                        placeholder={t("ph_why")}
                     />
                     <div className="row">
                         <input
-                            className="input"
+                            className="input minutes"
                             type="number"
                             min="5"
                             value={minutes}
                             onChange={lambda (e: ChangeEvent) { minutes = int(e.target.value or "0"); }}
                         />
-                        <span className="muted nowrap">min / day</span>
+                        <span className="muted nowrap">{t("min_day")}</span>
                         <select
                             className="input"
+                            aria-label={t("goal_language")}
                             value={language}
                             onChange={lambda (e: ChangeEvent) { language = e.target.value; }}
                         >
-                            <option value="en">English</option>
-                            <option value="sw">Kiswahili</option>
+                            <option value="en">{t("lang_en")}</option>
+                            <option value="sw">{t("lang_sw")}</option>
                         </select>
                     </div>
                     <button
-                        className="btn"
+                        className="btn block"
                         disabled={planning or not title.strip()}
                         onClick={plan_new_goal}
                     >
-                        {"Planning…" if planning else "Plan it"}
+                        {t("planning") if planning else t("plan_it")}
                     </button>
-                    <h2>My goals</h2>
+                    <h2>{t("my_goals")}</h2>
+                    {len(goals) == 0 and <p className="empty-state small">{t("no_goals")}</p>}
                     {[
-                        <div
+                        <button
                             key={jid(g)}
                             className={"item " + ("active" if jid(g) == selected_goal else "")}
                             onClick={lambda { open_goal(g); }}
                         >
                             <strong>{g.title}</strong>
-                            <span className="muted"> {g.minutes_per_day} min/day · {g.language}</span>
-                        </div> for g in goals
+                            <span className="muted">
+                                {t("goal_meta").replace("{m}", str(g.minutes_per_day))} · {g.language}
+                            </span>
+                        </button> for g in goals
                     ]}
                 </section>
-                {plan_panel}
+                {goal_panel}
             </div>
-            <footer className="footer">
-                Need support? Call Kenya Red Cross on 1199.
-            </footer>
+            <footer className="footer">{t("footer")}</footer>
         </div>;
 }
